@@ -119,14 +119,12 @@ select {
   background: var(--card-alt); border: 1px solid var(--border); border-radius: 9px;
   padding: 8px 10px; width: 100%;
 }
-.segmented { display: inline-flex; background: var(--hover); border-radius: 10px; padding: 3px; margin: 4px 0 14px; }
-.segmented button { border: 0; background: transparent; padding: 6px 14px; border-radius: 8px; color: var(--text-2); }
-.segmented button[aria-checked="true"] { background: var(--card); color: var(--text); box-shadow: var(--shadow); }
 .call-sentence { font-size: 1.05rem; font-weight: 550; background: var(--card-alt); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .activity li button { margin-top: 6px; padding: 4px 10px; font-size: .82rem; }
 
 .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
 .notice { margin: 12vh auto; max-width: 560px; padding: 0 16px; text-align: center; }
+.notice code { overflow-wrap: anywhere; }
 .notice p { color: var(--text-2); }
 
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 0; }
@@ -142,12 +140,15 @@ select {
 .closes b, [data-count] { font-variant-numeric: tabular-nums; }
 
 .account { font-family: var(--mono); font-size: .86em; background: var(--hover); border-radius: 5px; padding: 0 5px; }
-.account.mine { background: var(--primary-soft); color: var(--primary); font-family: var(--font); font-weight: 600; }
 
 .badge { display: inline-block; font-size: .76rem; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--hover); color: var(--text-2); }
 .badge.painting { background: var(--primary-soft); color: var(--primary); }
 .badge.auction, .badge.won { background: var(--warning-soft); color: var(--warning); }
 .badge.owned { background: var(--success-soft); color: var(--success); }
+.badge.yours { background: var(--primary-soft); color: var(--primary); }
+.account.mine { background: var(--primary-soft); color: var(--primary); font-family: var(--font); font-weight: 600; }
+.linked { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 6px; }
+.linked li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
 .activity { list-style: none; margin: 0; padding: 0; font-size: .88rem; }
 .activity li { padding: 7px 0; border-bottom: 1px solid var(--border); }
@@ -215,10 +216,7 @@ main.week .side { border: 0; padding: 0; overflow: visible; }
 .prose p { color: var(--text-2); }
 
 /* ---- Wallet */
-.wallet-chip { padding: 6px 12px; border-radius: 99px; font-variant-numeric: tabular-nums; }
-.dot { width: 8px; height: 8px; border-radius: 50%; }
-.dot.busy { background: var(--warning); animation: pulse 1.2s infinite ease-in-out; }
-@keyframes pulse { 50% { opacity: .3; } }
+.sign-chip { padding: 6px 12px; border-radius: 99px; font-variant-numeric: tabular-nums; }
 dialog {
   width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 48px);
   border: 1px solid var(--border); border-radius: 16px; padding: 24px;
@@ -262,7 +260,7 @@ summary { cursor: pointer; color: var(--text-2); font-size: .9rem; }
   nav { gap: 0; }
   nav a { padding: 6px 8px; white-space: nowrap; }
   .long { display: none; }
-  .wallet-chip { padding: 6px 10px; white-space: nowrap; font-size: .84rem; }
+  .sign-chip { padding: 6px 10px; white-space: nowrap; font-size: .84rem; }
   main.paint { grid-template-rows: min(76vh, 640px) auto; }
   .toolbar { gap: 6px; padding: 6px; max-width: calc(100% - 16px); }
   .swatch { width: 24px; height: 24px; }

@@ -1,21 +1,17 @@
-// The painting wallet: one P-256 key kept in this browser, an account of the
-// reference policy-p256 (Ting wiki: programs/policies). The browser's own
-// WebCrypto signs. Its ECDSA hashes what it signs with SHA-256, and Ting's
-// signing digest is `H("app/sign-v1", message)`, SHA-256 of a fixed prefix and
-// the message: so signing `prefix ‖ message` signs exactly the digest the
-// policy checks, and the page needs no cryptography library.
-import { concat, hex, unhex } from './bytes.js';
-import { hashPrefix, policyAccount } from './ting.js';
+// A P-256 key for the development chain's test accounts, an account of the
+// reference policy-p256 (Ting wiki: programs/policies), signed with WebCrypto.
+// Its ECDSA hashes what it signs with SHA-256, and Ting's signing digest is
+// `H("app/sign-v1", message)`, SHA-256 of a fixed prefix and the message: so
+// signing `prefix ‖ message` signs exactly the digest the policy checks.
+import { concat, hex, unhex } from '../web/js/bytes.js';
+import { hashPrefix, policyAccount } from '../web/js/ting.js';
 
-const STORE = 'ting-canvas/wallet-v1';
 const SIGN_PREFIX = hashPrefix('app/sign-v1');
 /** The order of P-256. */
 const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 const ALGORITHM = { name: 'ECDSA', namedCurve: 'P-256' };
 
-export const cryptoAvailable = () => Boolean(globalThis.crypto?.subtle);
-
-export class Wallet {
+export class Key {
   constructor(privateKey, publicKey, jwk) {
     this.privateKey = privateKey;
     /** 65 bytes, uncompressed: the policy params. */
@@ -26,14 +22,7 @@ export class Wallet {
   /** A new key, not kept anywhere yet. */
   static async generate() {
     const pair = await crypto.subtle.generateKey(ALGORITHM, true, ['sign', 'verify']);
-    return Wallet.fromJwk(await crypto.subtle.exportKey('jwk', pair.privateKey));
-  }
-
-  /** A new key, kept in this browser. */
-  static async create() {
-    const wallet = await Wallet.generate();
-    wallet.save();
-    return wallet;
+    return Key.fromJwk(await crypto.subtle.exportKey('jwk', pair.privateKey));
   }
 
   static async fromJwk(jwk) {
@@ -44,38 +33,7 @@ export class Wallet {
     const privateKey = await crypto.subtle.importKey('jwk', { kty, crv, x, y, d, ext: true }, ALGORITHM, true, ['sign']);
     const verify = await crypto.subtle.importKey('jwk', { kty, crv, x, y, ext: true }, ALGORITHM, true, ['verify']);
     const publicKey = new Uint8Array(await crypto.subtle.exportKey('raw', verify));
-    return new Wallet(privateKey, publicKey, { kty, crv, x, y, d });
-  }
-
-  /** The wallet this browser keeps, if any. */
-  static async load() {
-    let text = null;
-    try {
-      text = localStorage.getItem(STORE);
-    } catch {
-      return null;
-    }
-    return text ? Wallet.fromJwk(JSON.parse(text)) : null;
-  }
-
-  save() {
-    localStorage.setItem(STORE, JSON.stringify(this.jwk));
-  }
-
-  static forget() {
-    localStorage.removeItem(STORE);
-  }
-
-  /** A backup to keep: the private key, as JSON. */
-  backup() {
-    return JSON.stringify({ kind: 'ting-canvas-wallet', version: 1, policy: 'policy-p256', key: this.jwk }, null, 2);
-  }
-
-  static async restore(text) {
-    const parsed = JSON.parse(text);
-    const wallet = await Wallet.fromJwk(parsed.key ?? parsed);
-    wallet.save();
-    return wallet;
+    return new Key(privateKey, publicKey, { kty, crv, x, y, d });
   }
 
   account(policy) {

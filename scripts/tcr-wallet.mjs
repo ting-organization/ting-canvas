@@ -15,7 +15,7 @@ import { hex, unhex } from '../web/js/bytes.js';
 import * as C from '../web/js/canvas.js';
 import * as tcr from '../web/js/tcr.js';
 import { CODE_HASHES } from '../web/js/config.js';
-import { Wallet } from '../web/js/wallet.js';
+import { Key } from './keys.mjs';
 import { Chain } from './chain.mjs';
 
 const args = process.argv.slice(2);
@@ -43,10 +43,10 @@ if (fields.coin && (await chain.node.contract(unhex(fields.coin))).code_hash !==
 const state = JSON.parse(readFileSync(statePath, 'utf8'));
 const coin = unhex(state.coin);
 if (!state.phone) {
-  state.phone = (await Wallet.generate()).jwk;
+  state.phone = (await Key.generate()).jwk;
   writeFileSync(statePath, JSON.stringify(state, null, 2));
 }
-const signer = (await Wallet.fromJwk(state.phone)).signer(chain.policy);
+const signer = (await Key.fromJwk(state.phone)).signer(chain.policy);
 const info = C.decodeCoin(await chain.node.record(coin, C.CONFIG_KEY));
 const units = (text) => C.parseAmount(text, info.decimals);
 const shown = (type, v) => {
@@ -72,7 +72,7 @@ if (fields.burn || fields.to) {
   console.log(`Pays       ${fields.burn ? `${fields.burn} ${info.symbol}, burned` : `${fields.amount} ${info.symbol} to ${fields.to}`}`);
   const need = units(fields.burn ?? fields.amount);
   if ((await chain.funds(coin, signer.account)).available < need) {
-    const faucet = (await Wallet.fromJwk(state.faucet)).signer(chain.policy);
+    const faucet = (await Key.fromJwk(state.faucet)).signer(chain.policy);
     await chain.transfer(faucet, coin, signer.account, need + 100_000_000n);
   }
   payment = { coin, coinNonce: (await chain.funds(coin, signer.account)).nonce, effect };

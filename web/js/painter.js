@@ -32,8 +32,6 @@ export class Painter {
     this.colors = new Uint8Array(config.width * config.height);
     this.marks = new Uint8Array(config.width * config.height);
     this.draft = new Map();
-    /** Pixels sent and not yet in a block, drawn as if painted. */
-    this.sent = new Map();
     // The darkest color to start with: it shows on the white of a fresh canvas.
     const light = (rgb) => Math.max(...rgb);
     this.color = config.palette.reduce((best, rgb, i) => (light(rgb) < light(config.palette[best]) ? i : best), 0);
@@ -263,7 +261,7 @@ export class Painter {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.base, ox, oy, width * s, height * s);
 
-    for (const [index, color] of [...this.sent, ...this.draft]) {
+    for (const [index, color] of this.draft) {
       const x = index % width, y = Math.floor(index / width);
       ctx.fillStyle = css(palette[color]);
       ctx.fillRect(ox + x * s, oy + y * s, s, s);

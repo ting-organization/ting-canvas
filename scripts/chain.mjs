@@ -4,12 +4,20 @@
 import { readFileSync } from 'node:fs';
 import { concat, framed, fromUtf8, hex, u64, unhex, utf8, Writer } from '../web/js/bytes.js';
 import * as canvas from '../web/js/canvas.js';
-import { POLICY_P256 } from '../web/js/config.js';
 import * as tcr from '../web/js/tcr.js';
 import { deployedId, encodeCall, encodeDeploy, H, Node, policyAccount, transactionId } from '../web/js/ting.js';
 
 const root = new URL('..', import.meta.url);
 export const read = (path) => new Uint8Array(readFileSync(new URL(path, root)));
+
+/**
+ * The canonical deployments of policy-p256 (Ting wiki: programs, canonical
+ * deployment), which the test keys sign through.
+ */
+const POLICY_P256 = {
+  '15d6549cfacd816f835c632b4c67308d1c63e642f4cbf4049368430670705107': '35d2b107de4b2a738a8190be18ccfd35d9bac45da094cfa4281a3a4b178852b3',
+  '8578787146be1ef0aacc797754001290272915e89cd9e5784fe1368e4c2131bc': '34ddc75c0463fd2d1542127fbf0fe92ba41bd4fbfba4e473d3aa941e74ab3b5e',
+};
 
 /** The canonical deployment budget of the reference programs (Ting wiki: programs). */
 export const DEPLOY_BUDGET = [50_000_000, 64, 16_777_216, 16_777_216];

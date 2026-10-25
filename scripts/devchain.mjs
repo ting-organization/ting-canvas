@@ -21,7 +21,7 @@ import { concat, equal, Reader, utf8, Writer } from '../web/js/bytes.js';
 import * as C from '../web/js/canvas.js';
 import * as tcr from '../web/js/tcr.js';
 import { contractAccount } from '../web/js/ting.js';
-import { Wallet } from '../web/js/wallet.js';
+import { Key } from './keys.mjs';
 import { Chain, canvasConfig, hex, identity, read, unhex } from './chain.mjs';
 
 const args = process.argv.slice(2);
@@ -64,7 +64,7 @@ async function setup() {
   const registry = await chain.deploy(read('../ting-reference/programs/id-registry.wasm'), new Uint8Array());
   console.log(`id-registry  ${hex(registry)}`);
 
-  const faucet = await Wallet.generate();
+  const faucet = await Key.generate();
   const coinInput = new Writer().u8(1).bytes(utf8('Daler')).bytes(utf8('DLR')).u8(8)
     .u128((1n << 128n) - 1n).u128(0n).u64(0n).u128(0n).put(new Uint8Array(32)) // no cap, rewards or minter
     .u64(1).put(faucet.account(chain.policy)).u128(1_000_000n * DLR).finish();
@@ -95,7 +95,7 @@ async function newCanvas() {
 
 async function fund(accountHex, amountText) {
   const state = loadState();
-  const faucet = (await Wallet.fromJwk(state.faucet)).signer(chain.policy);
+  const faucet = (await Key.fromJwk(state.faucet)).signer(chain.policy);
   const amount = C.parseAmount(amountText, 8);
   const r = await chain.transfer(faucet, unhex(state.coin), unhex(accountHex), amount);
   if (r.status !== 0) throw new Error(`transfer failed: ${r.reason}`);
@@ -103,7 +103,7 @@ async function fund(accountHex, amountText) {
 }
 
 /**
- * A canvas with weeks of 90 seconds: painted by browser wallets and by an
+ * A canvas with weeks of 90 seconds: painted by P-256 test keys and by an
  * identity's spending account, auctioned, given to the identity's savings
  * account, offered for sale from there after the savings delay, sold, named
  * and given away.
@@ -112,11 +112,11 @@ async function e2e() {
   const state = loadState();
   const coin = unhex(state.coin);
   const registry = unhex(state.registry);
-  const faucet = (await Wallet.fromJwk(state.faucet)).signer(chain.policy);
-  const alice = (await Wallet.generate()).signer(chain.policy);
-  const bob = (await Wallet.generate()).signer(chain.policy);
+  const faucet = (await Key.fromJwk(state.faucet)).signer(chain.policy);
+  const alice = (await Key.generate()).signer(chain.policy);
+  const bob = (await Key.generate()).signer(chain.policy);
   const SAVINGS_DELAY = 20;
-  const carolId = identity(registry, chain.policy, await Wallet.generate(), [0, SAVINGS_DELAY]);
+  const carolId = identity(registry, chain.policy, await Key.generate(), [0, SAVINGS_DELAY]);
   const [spending, savings] = [carolId.slot(0), carolId.slot(1)];
   const costs = [];
   const check = (label, r, expect = 'success') => {

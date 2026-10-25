@@ -15,9 +15,9 @@ It is two pieces:
   keeps the canvases, takes the burns and bids, runs the auctions and records the
   owners. [SPEC.md](SPEC.md) states its rules.
 - **The page** (`web/`): a static web client, plain HTML, CSS and JavaScript with
-  no build step and no third-party code, that reads the chain from a node and signs
-  in the browser, or hands each action to Ting ID as a call link. It can be hosted
-  anywhere, GitHub Pages included.
+  no build step and no third-party code, that reads the chain from a node and hands
+  each action to Ting ID as a call link. It holds no key and no coins, and can be
+  hosted anywhere, GitHub Pages included.
 
 Every action is a call of [TCR-1](../ting-id/TCR-1.md), Ting Call Requests: a
 sentence in the program's own words, signed by the account that acts.
@@ -38,8 +38,8 @@ costs more to deface than it cost to make.
 
 **Every action is approved, and a payment pays for that one action.** The acting
 account approves the operation itself, in the program's words (TCR-1), through its
-policy, so any kind of account can play: a key in this browser, a Ting ID identity,
-a multisig. An action that moves coins carries a coin payment from that account,
+policy, so any kind of account can play: a Ting ID identity, a plain key, a
+multisig. An action that moves coins carries a coin payment from that account,
 bound to the operation's digest (a *bound action*, wiki: programs/conventions): the
 coin runs it only inside that call, and its check of the payment is the approval,
 so every call checks one signature. An owner's action, which moves no coins,
@@ -61,22 +61,21 @@ transaction, so neither side can cheat the other. Kept in a Ting ID Savings
 account, a canvas keeps the account's time lock: whatever its owner does with it
 waits for the delay and can be cancelled meanwhile, so a stolen key cannot take it.
 
-**The page trusts nothing it can check.** Before signing it checks the CodeHash of
-the canvas program, of its coin and of the signature policy against the code it was
-written for, and it refuses a canvas that runs anything else.
+**The page trusts nothing it can check.** Before it makes a call link it checks the
+CodeHash of the canvas program and of its coin against the code it was written for,
+and it refuses a canvas that runs anything else.
 
 ## Signing
 
-The wallet panel chooses who signs.
-
-**Ting ID.** Each action becomes a `ting:call` link, as a QR code or a link to open
-on the phone, its values compressed as `zvalues` whenever that is shorter. The
+The page holds no key and no coins: a wallet signs. Each action becomes a
+`ting:call` link, as a QR code or a link to open on the phone, its values compressed as `zvalues` whenever that is shorter. The
 paint template names the palette's colors as an enum, so Ting ID shows each
 pixel's color by name, and a bid or a purchase shows its amount as the payment
 Ting ID checked itself. A link
 under 1,000 characters, which scans well off a screen, holds a stroke of about 200
 pixels, or about 95 scattered ones, the template with its sixteen color names taking
-a third of it; a longer paint is opened on the phone, or signed in this browser. Ting ID shows the action in the program's words and what leaves the
+a third of it; a longer paint is opened on the phone. Ting ID shows the action in
+the program's words and what leaves the
 account, signs it with the account the user picks, and submits it; the page finds
 the operation in the program's *executed* events, or its *scheduled* one for an
 account with a delay. No server is involved. Owner actions carry `from`, so only the
@@ -86,20 +85,17 @@ signature. Each link
 also carries the page's address as `return`: once Ting ID sent the call it offers to
 open it, with `#ting-tx=` and the TransactionId, and the page follows that
 transaction into a block and shows its week.
-`scripts/tcr-wallet.mjs` stands in for Ting ID on a development chain until it
-implements TCR-1.
 
-**This browser.** The page keeps one P-256 key in the browser's storage: an account of Ting's
-reference `policy-p256`. Ting's signing digest is SHA-256 over a fixed prefix and
-the message, and WebCrypto's ECDSA hashes what it signs with SHA-256, so the
-browser signs Ting messages with its own built-in cryptography. No library is
-involved, and WebCrypto needs a secure origin, which GitHub Pages is.
+Ting ID is the wallet that reads these links today; any wallet that implements
+TCR-1 does the same, with nothing to change in the page. On a development chain
+`scripts/tcr-wallet.mjs` stands in for one.
 
-The account is funded from [Ting ID](https://github.com/ting-organization/ting-id)
-with a `ting:pay` link, as a QR code or a link that opens the app. The wallet
-panel downloads a backup of the key. It is a hot wallet: whoever holds the key or
-the backup controls the account, so it should hold what its owner means to paint
-and bid with, no more.
+**Your accounts.** Without a key the page still knows who you are if you let it: it
+remembers your accounts' addresses in the browser, shows them as *you*, marks the
+canvases they own and opens their owner tools. A call Ting ID sends back through
+`return` links the account that made it, and the Ting ID panel adds or removes one
+by hand. An address proves nothing and signs nothing; it only changes what the page
+shows.
 
 ## Layout
 
@@ -154,11 +150,11 @@ node scripts/devchain.mjs setup --period 600
 `setup` deploys the reference P-256 policy and identity registry, a test coin
 whose supply goes to a faucet, and a canvas with ten-minute weeks, and prints the
 page's address for it. Serve the page with `python3 scripts/serve.py` and open it
-with that query string; `node scripts/devchain.mjs fund <account> 5` sends the
-page's wallet 5 test coins, and `node scripts/tcr-wallet.mjs '<link>'` completes a
-call link the page shows in Ting ID mode. `node scripts/devchain.mjs e2e` runs a
-canvas of 90-second weeks through the page's own modules, with real signatures:
-browser wallets and an identity paint, bid and win; the identity's Savings account
+with that query string; `node scripts/devchain.mjs fund <account> 5` sends an
+account 5 test coins, and `node scripts/tcr-wallet.mjs '<link>'` completes a call
+link the page shows. `node scripts/devchain.mjs e2e` runs a canvas of 90-second
+weeks through the page's own modules, with real signatures: P-256 test keys and an
+identity paint, bid and win; the identity's Savings account
 offers the canvas for sale, which waits for its delay, and cancels a second
 operation; then it is sold, named and given away.
 
@@ -180,7 +176,7 @@ canvas with other options is another deployment, with another ContractId.
 ## Hosting
 
 `web/` is the whole site. `.github/workflows/pages.yml` publishes it to GitHub
-Pages on every push to `master` that changes it (Settings → Pages → Source: GitHub
+Pages on every push to `main` that changes it (Settings → Pages → Source: GitHub
 Actions). Any static host works the same way. The page talks to
 `https://node1.ting-node.com` by default, which answers browsers from any origin;
 `?node=<url>&canvas=<id>` points it elsewhere.

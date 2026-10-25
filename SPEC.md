@@ -16,8 +16,8 @@ each is a template of the program's own, which declares its fields and gives the
 sentence that shows them, and its values, approved by the acting account. An
 operation that moves coins carries a coin payment from that account, tied to it,
 which is also its approval. A wallet that speaks TCR-1, such
-as Ting ID, does them from a `ting:call` link; the page in `web/` does them with its
-own wallet too. This page states what the canvas adds to TCR-1, and the choices
+as Ting ID, does them from a `ting:call` link, which the page in `web/` makes. This
+page states what the canvas adds to TCR-1, and the choices
 TCR-1 leaves to a program.
 
 In the formats below, integers are little-endian and fixed width, `Bytes(x)` is

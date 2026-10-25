@@ -1,23 +1,22 @@
 // Ting Canvas, the page: reads the chain through one node, and does the
-// canvas's operations as TCR-1 calls, signed either by the wallet this page
-// keeps in the browser or by Ting ID, which gets each call as a link.
+// canvas's operations as TCR-1 call links, which Ting ID, or any wallet that
+// reads them, signs and submits. The page holds no key and no coins.
 import { equal, hex, Reader, unhex } from './bytes.js';
 import {
-  auctionEnds, bidCall, burnEffect, buyCall, closes, CONFIG_KEY, decodeCoin, decodeCoinAccount,
+  auctionEnds, bidCall, buyCall, closes, CONFIG_KEY, decodeCoin,
   decodeConfig, decodeEvent, decodeTiles, decodeTitle, decodeWeek, eventTopic, formatAmount, giveCall,
   levelCost, levelsFor, linkAmount, listCall, minimumBid, nameCall, opens, ownerOf, paintCall,
   parseAmount, priceOf, recordKey, settleInput, stage, templatesOf, tileKey, TITLE_MAX, titleKey,
-  transferEffect, unlistCall, unnameCall, weekAt, weekOfCall,
+  unlistCall, unnameCall, weekAt, weekOfCall,
 } from './canvas.js';
-import { CODE_HASHES, DEFAULT_NODE, MAX_DRAFT, NETWORKS, POLICY_P256 } from './config.js';
+import { CODE_HASHES, DEFAULT_NODE, MAX_DRAFT, NETWORKS } from './config.js';
 import { css, imageOf, Painter } from './painter.js';
 import { qrSvg } from './qr.js';
 import {
   callLink, CANCELLED, checkListed, decodeCancelled, decodeExecuted, decodeScheduled, decodeTemplateList,
-  decodeValues, EXECUTED, feeEffect, nonceKey, operationHash, runCall, SCHEDULED, signCall, TEMPLATES_KEY, textProblem,
+  decodeValues, EXECUTED, operationHash, runCall, SCHEDULED, TEMPLATES_KEY, textProblem,
 } from './tcr.js';
 import { contractAccount, encodeCall, idOf, Node, NodeError, transactionId } from './ting.js';
-import { cryptoAvailable, Wallet } from './wallet.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -35,20 +34,11 @@ const app = {
   /** The program's template list: each template's hash, in hex, to its text. */
   templates: null,
   coin: null,
-  policy: null,
-  /** Who signs: `browser`, the wallet this page keeps, or `tingid`, by call links. */
-  signer: 'browser',
-  wallet: null,
-  account: null,
-  funds: null,
-  fee: 0n,
-  /** Submitted transactions not yet in a block, by id. */
-  pending: new Map(),
-  /** The next nonces, in the canvas and in the coin, past what is pending. */
-  local: { call: null, coin: null },
+  /** Accounts the user linked, in hex: public addresses only, to show what is theirs. */
+  accounts: new Set(),
   /** What the current view does every second, when the wallet changes, and when it goes away. */
   tick: null,
-  onWallet: null,
+  onAccounts: null,
   leave: null,
 };
 
@@ -72,7 +62,7 @@ const day = (t) => new Date(t * 1000).toLocaleDateString(undefined, { month: 'sh
 function who(account) {
   if (!account) return '—';
   const text = hex(account);
-  const mine = app.account && equal(account, app.account);
+  const mine = isMine(account);
   return `<span class="account${mine ? ' mine' : ''}" title="${text}">${mine ? 'you' : `${text.slice(0, 6)}…${text.slice(-4)}`}</span>`;
 }
 
@@ -130,23 +120,6 @@ async function loadWeek(week) {
   };
 }
 
-async function loadFunds() {
-  if (!app.account) return (app.funds = null);
-  app.funds = decodeCoinAccount(await app.node.record(app.config.coin, app.account));
-  renderChip();
-  return app.funds;
-}
-
-/** The nonces to sign with: the account's in the canvas and in the coin, past its pending calls. */
-async function nonces() {
-  const [call, coin] = await app.node.storage([[app.canvas, nonceKey(app.account)], [app.config.coin, app.account]]);
-  const chainCall = call ? new Reader(call).u64() : 0n;
-  const chainCoin = decodeCoinAccount(coin).nonce;
-  if (!app.pending.size) app.local = { call: null, coin: null };
-  const max = (a, b) => (b != null && b > a ? b : a);
-  return { call: max(chainCall, app.local.call), coin: max(chainCoin, app.local.coin) };
-}
-
 /** Pages of a program's events of one topic, from height `from`, each with its block's height and time. */
 async function loadTopic(topic, from = 1, decode) {
   const out = [];
@@ -195,48 +168,16 @@ async function loadScheduled(week) {
 
 // ---- Doing things ----------------------------------------------------------
 
-function budget(input, tiles = 1) {
-  const size = input.length + 160;
-  return [100_000_000, 1024 + 4 * tiles, size + 81 + 400_000 + 2 * input.length, 300_000 + 600 * tiles];
-}
-
 /**
- * Does an operation: `call` from canvas.js, `pay` as `{ burn }` or `{ to, amount }`
- * or none, and for a call link `from` and `delayed`. Signed here by the
- * page's wallet, whose account has no delay, so an operation without a payment
- * takes a fee payment; or handed to Ting ID as a link. Whether it was sent.
+ * Submits an unsigned input, a run or a settle, which needs no wallet, and
+ * follows it into a block. It gets a budget of its own each time: the same
+ * bytes would be the same transaction as an earlier try that failed (TCR-1,
+ * running), and may be in blocks already.
  */
-async function perform({ call, pay, label, tiles, from, delayed, done }) {
-  if (app.signer === 'tingid') return showCall({ call, pay, label, from, delayed, done });
-  if (!cryptoAvailable() || !app.wallet) {
-    openWallet();
-    return false;
-  }
-  const n = await nonces();
-  const payment = {
-    coin: app.config.coin,
-    coinNonce: n.coin,
-    fee: app.fee,
-    effect: !pay ? feeEffect(app.canvas) : pay.burn != null ? burnEffect(pay.burn) : transferEffect(pay.to, pay.amount),
-  };
-  const input = await signCall({
-    signer: app.wallet.signer(app.policy), chain: app.chain, program: app.canvas,
-    nonce: n.call, validUntil: BigInt(now() + 3600), head: call.head, payment,
-  });
-  return send(input, { tiles, label, done, used: { call: n.call, coin: n.coin } });
-}
-
-/**
- * Submits a call and follows it into a block. An unsigned input, a run or a
- * settle, gets a budget of its own each time: the same bytes would be the same
- * transaction as an earlier try that failed (TCR-1, running).
- */
-async function send(input, { tiles, label, done, used }) {
-  const b = budget(input, tiles);
-  if (!used) b[0] += Math.floor(Math.random() * 1_000_000);
+async function send(input, { label, done }) {
+  const b = [100_000_000 + Math.floor(Math.random() * 1_000_000), 1024, 400_000 + 3 * input.length, 300_000];
   const tx = encodeCall(app.canvas, input, b);
-  // An unsigned run or settle may be in blocks already: the same bytes are the same transaction.
-  const before = used ? 0 : await app.node.occurrences(transactionId(app.chain, tx));
+  const before = await app.node.occurrences(transactionId(app.chain, tx));
   let id;
   try {
     id = await app.node.submit(tx);
@@ -244,14 +185,7 @@ async function send(input, { tiles, label, done, used }) {
     toast(`${esc(label)}: ${esc(e.message)}`, 'error');
     return false;
   }
-  if (used) {
-    app.local.call = used.call + 1n;
-    if (used.coin != null) app.local.coin = used.coin + 1n;
-  }
-  const note = toast(`${esc(label)}: waiting for a block…`, 'info', 600_000);
-  app.pending.set(id, label);
-  renderChip();
-  follow(id, before, label, note, done);
+  follow(id, before, label, toast(`${esc(label)}: waiting for a block…`, 'info', 600_000), done);
   return true;
 }
 
@@ -259,11 +193,7 @@ async function follow(id, before, label, note, done) {
   const started = Date.now();
   const end = (message, kind, ok) => {
     note.remove();
-    app.pending.delete(id);
-    if (!ok) app.local = { call: null, coin: null };
-    renderChip();
     toast(message, kind, 10_000);
-    loadFunds().catch(() => {});
     done?.(ok);
   };
   for (;;) {
@@ -290,10 +220,15 @@ async function follow(id, before, label, note, done) {
 }
 
 /**
- * Hands an operation to Ting ID as a TCR-1 call link, and watches the
- * program's events until it is done, or scheduled for an account with a delay.
+ * Does an operation: `call` from canvas.js, `pay` as `{ burn }` or `{ to, amount }`
+ * or none, and for an owner's operation `from` and `delayed`. It goes to Ting
+ * ID, or any wallet that reads TCR-1 call links, as a link with the canvas's
+ * coin, so that an operation without a payment can take a fee payment. The page
+ * watches the program's events until it is done, or scheduled for an account
+ * with a delay, and then calls `done(true)`; `done(false)` when the dialog is
+ * closed first.
  */
-async function showCall({ call, pay, label, from, delayed, done }) {
+async function perform({ call, pay, label, from, delayed, done }) {
   const decimals = app.coin.decimals;
   const link = await callLink({
     chainHex: app.chainHex, program: app.canvas, template: call.template, values: call.values, coin: app.config.coin,
@@ -357,8 +292,7 @@ function route() {
   app.leave?.();
   app.leave = null;
   app.tick = null;
-  app.onWallet = null;
-  app.onFunds = null;
+  app.onAccounts = null;
   const [, view, arg] = location.hash.split('/');
   $$('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === (view || 'paint')));
   const main = $('#view');
@@ -430,7 +364,6 @@ function renderPaint(main) {
         <dl class="lines">
           <div><dt>Pixels</dt><dd id="draft-count">0</dd></div>
           <div><dt>Burns</dt><dd id="draft-price">—</dd></div>
-          <div><dt>Your balance</dt><dd id="draft-balance">—</dd></div>
         </dl>
         <div class="row">
           <button class="primary" id="paint" disabled>Paint</button>
@@ -445,13 +378,7 @@ function renderPaint(main) {
     </aside>`;
 
   let data = null;
-  /** Marks of pixels sent and not yet in a block, as they will be. */
-  const sentMarks = new Map();
-  const marks = () => {
-    const m = data.marks.slice();
-    for (const [index, mark] of sentMarks) m[index] = mark;
-    return m;
-  };
+  const marks = () => data.marks;
   const boost = () => Number($('#protect').value);
 
   const painter = new Painter($('#stage'), config, {
@@ -520,10 +447,8 @@ function renderPaint(main) {
   const updateDraft = () => {
     const pixels = draftPixels();
     const price = priceOf(config, pixels);
-    const tingid = app.signer === 'tingid';
     $('#draft-count').textContent = pixels.length.toLocaleString();
     $('#draft-price').innerHTML = pixels.length ? amount(price) : '—';
-    $('#draft-balance').innerHTML = tingid ? 'in Ting ID' : app.funds ? amount(app.funds.available) : (app.wallet ? '…' : 'no wallet yet');
     $('#clear').disabled = !pixels.length;
     const hint = $('#draft-hint');
     const button = $('#paint');
@@ -537,52 +462,32 @@ function renderPaint(main) {
     const next = levelCost(config, boost() + 1);
     hint.innerHTML = `${over ? `${plural(over, 'pixel')} of it paint over others’ work, for twice what is on them. ` : ''}`
       + `Painting over your fresh pixels will then cost at least ${amount(next)} each.`;
-    if (tingid) {
-      button.textContent = `Paint ${plural(pixels.length, 'pixel')} with Ting ID`;
-    } else if (!app.wallet) {
-      button.textContent = 'Set up a wallet to paint';
-      button.disabled = false;
-    } else if (app.funds && app.funds.available < price + app.fee) {
-      button.textContent = 'Add coins to paint';
-      button.disabled = false;
-      hint.innerHTML = `You need ${amount(price + app.fee - app.funds.available)} more.`;
-    } else {
-      button.textContent = `Paint ${plural(pixels.length, 'pixel')}`;
-    }
+    button.textContent = `Paint ${plural(pixels.length, 'pixel')} with Ting ID`;
   };
 
   $('#clear').onclick = () => painter.clearDraft();
   $('#paint').onclick = async () => {
     const pixels = draftPixels();
     const price = priceOf(config, pixels);
-    if (app.signer === 'browser' && (!app.wallet || !app.funds || app.funds.available < price + app.fee)) return openWallet();
     if (weekAt(config, now() + 30) !== week) {
       return toast('This canvas locks in less than a minute: a paint sent now would likely arrive too late.', 'error');
     }
-    $('#paint').disabled = true;
-    const tiles = new Set(pixels.map(([i]) => Math.floor(Math.floor(i / config.width) / 16) * config.tilesX + Math.floor((i % config.width) / 16))).size;
-    const settled = () => {
-      for (const [index, , level] of pixels) if (sentMarks.get(index) === level + 1) sentMarks.delete(index);
-      for (const [index, color] of pixels) if (painter.sent.get(index) === color) painter.sent.delete(index);
+    // The draft stays until the paint is on chain: a link the wallet never
+    // signs, or a dialog closed, leaves it as it was.
+    const painted = (ok) => {
+      if (ok) {
+        for (const [index, color] of pixels) if (painter.draft.get(index) === color) painter.draft.delete(index);
+        painter.render();
+      }
       refresh();
     };
     try {
-      const sent = await perform({
-        call: paintCall(config, BigInt(week), pixels), pay: { burn: price }, tiles,
-        label: `Painting ${plural(pixels.length, 'pixel')}`, done: settled,
+      await perform({
+        call: paintCall(config, BigInt(week), pixels), pay: { burn: price },
+        label: `Painting ${plural(pixels.length, 'pixel')}`, done: painted,
       });
-      if (sent) {
-        for (const [index, color, level] of pixels) {
-          painter.sent.set(index, color);
-          sentMarks.set(index, level + 1);
-        }
-        painter.clearDraft();
-      } else {
-        updateDraft();
-      }
     } catch (e) {
       toast(esc(e.message), 'error');
-      updateDraft();
     }
   };
 
@@ -595,7 +500,6 @@ function renderPaint(main) {
       $('#paints').textContent = fresh.record.paints.toLocaleString();
       $('#pixels').textContent = fresh.record.pixels.toLocaleString();
       if (shownTitle(fresh.title)) $('#title').textContent = shownTitle(fresh.title);
-      await loadFunds().catch(() => {});
       updateDraft();
       renderActivity(await loadEvents(week));
     } catch (e) {
@@ -616,8 +520,7 @@ function renderPaint(main) {
     $('#countdown').textContent = duration(closes(config, week) - now());
   };
   app.tick();
-  app.onWallet = updateDraft;
-  app.onFunds = updateDraft;
+  app.onAccounts = refresh;
   app.leave = () => {
     clearInterval(poll);
     painter.destroy();
@@ -658,6 +561,7 @@ async function renderGallery(main) {
       </a>`).join('')}</div>`;
   let gone = false;
   app.leave = () => { gone = true; };
+  app.onAccounts = () => renderGallery(main);
   for (const w of weeks) {
     if (gone) return;
     const el = $(`[data-week="${w}"]`, main);
@@ -669,7 +573,8 @@ async function renderGallery(main) {
       let meta = STAGES[s];
       if (s === 'auction' && data.record.bid > 0n) meta += ` · ${amount(data.record.bid, 4)}`;
       if (s === 'owned' && data.record.price > 0n) meta = `For sale · ${amount(data.record.price, 4)}`;
-      $('.tile-meta', el).innerHTML = `<span class="badge ${s}">${meta}</span> ${amount(data.record.burned, 4)} burned`;
+      const yours = isMine(ownerOf(config, w, data.record, now())) ? '<span class="badge yours">Yours</span> ' : '';
+      $('.tile-meta', el).innerHTML = `${yours}<span class="badge ${s}">${meta}</span> ${amount(data.record.burned, 4)} burned`;
     } catch (e) {
       $('.tile-meta', el).textContent = e.message;
     }
@@ -702,9 +607,8 @@ async function renderWeek(main, week) {
     const t = now();
     const s = stage(config, week, record, t);
     const owner = ownerOf(config, week, record, t);
-    const mine = owner && app.account && equal(owner, app.account);
+    const mine = isMine(owner);
     const ends = auctionEnds(config, week, record);
-    const tools = owner && (app.signer === 'tingid' ? 'tingid' : mine ? 'browser' : null);
     main.innerHTML = `
       <section class="art">
         <div class="frame"><canvas id="art" width="${config.width}" height="${config.height}"></canvas></div>
@@ -726,7 +630,7 @@ async function renderWeek(main, week) {
           </dl>
         </div>
         <div class="card" id="market">${market(s, record, ends, owner, mine, t)}</div>
-        ${tools ? ownerTools(record, title, tools, open) : ''}
+        ${owner ? ownerTools(record, title, mine, open) : ''}
         ${waiting.length ? scheduledCard(t) : ''}
         <div class="card"><h2>History</h2><ol class="activity" id="history"><li class="muted">Loading…</li></ol></div>
       </aside>`;
@@ -781,7 +685,7 @@ async function renderWeek(main, week) {
     }
   };
 
-  const ownerTools = (record, title, tools, open) => {
+  const ownerTools = (record, title, mine, open) => {
     const forms = `
       <form class="row" id="list-form">
         <label class="field"><span>Sell for (${esc(app.coin.symbol)})</span><input id="list-price" inputmode="decimal" autocomplete="off" value="${record.price > 0n ? formatAmount(record.price, app.coin.decimals) : ''}"></label>
@@ -797,11 +701,11 @@ async function renderWeek(main, week) {
         <label class="field"><span>Give to account</span><input id="give-to" class="mono" autocomplete="off" placeholder="64 hex digits"></label>
         <button>Give</button>
       </form>`;
-    return tools === 'browser'
-      ? `<div class="card"><h2>You own this canvas</h2>${forms}</div>`
+    const hint = '<p class="hint">Each action becomes a call link that only the owner’s account can sign. From a Savings account it takes effect after the account’s delay, and can be cancelled until then.</p>';
+    return mine
+      ? `<div class="card"><h2>You own this canvas</h2>${hint}${forms}</div>`
       : `<div class="card"><details id="owner-tools"${open ? ' open' : ''}><summary><b>Own it? Act from Ting ID</b></summary>
-          <p class="hint">Each action becomes a call link that only the owner’s account can sign. From a Savings account it takes effect after the account’s delay, and can be cancelled until then.</p>
-          ${forms}</details></div>`;
+          ${hint}${forms}</details></div>`;
   };
 
   const scheduledCard = (t) => `<div class="card"><h2>Scheduled</h2><ol class="activity">${waiting.map((s, i) => {
@@ -939,7 +843,7 @@ async function renderWeek(main, week) {
   app.tick = () => {
     $$('[data-count]', main).forEach((el) => (el.textContent = duration(Number(el.dataset.count) - now())));
   };
-  app.onWallet = () => draw();
+  app.onAccounts = () => draw();
   app.leave = () => {
     clearInterval(poll);
     cancelAnimationFrame(playing);
@@ -980,149 +884,84 @@ function renderAbout(main) {
     delay, and its owner can cancel anything a stolen key tries in the meantime.</p>
     <h2>Signing</h2>
     <p>Every action is a Ting Call Request (TCR-1): a sentence in the program’s own words, signed by the account that
-    acts. The page signs with a key it keeps in your browser, an ordinary Ting account you fund from Ting ID; or it
-    hands each action to Ting ID itself, as a link or a QR code, and watches the chain for the result.</p>
+    acts. The page holds no key and no coins. It hands each action to Ting ID, or any wallet that reads Ting call
+    links, as a link or a QR code, and watches the chain for the result.</p>
     <h2>Trust nothing, check everything</h2>
-    <p>The page reads the chain through <code>${esc(app.node.base)}</code> and checks the code of everything it signs for:
-    the canvas program <code>${esc(hex(app.canvas))}</code>, the coin <code>${esc(hex(app.config.coin))}</code> and the
-    P-256 policy, each against the CodeHash it was written for. The program’s rules are in its specification,
+    <p>The page reads the chain through <code>${esc(app.node.base)}</code> and checks the code of what it makes calls for:
+    the canvas program <code>${esc(hex(app.canvas))}</code> and its coin <code>${esc(hex(app.config.coin))}</code>, each
+    against the CodeHash it was written for. The program’s rules are in its specification,
     <code>SPEC.md</code>, beside its source.</p>
   </article>`;
 }
 
-// ---- Wallet ----------------------------------------------------------------
+// ---- Signing ---------------------------------------------------------------
 
-function renderChip() {
-  const chip = $('#wallet-chip');
-  if (!chip) return;
-  const busy = app.pending.size ? '<span class="dot busy" title="A transaction is on its way"></span>' : '';
-  if (app.signer === 'tingid') chip.innerHTML = `${busy}${icon('wallet')} Ting ID`;
-  else if (!app.wallet) chip.innerHTML = `${icon('wallet')} Wallet`;
-  else chip.innerHTML = `${busy}${icon('wallet')} ${app.funds ? amount(app.funds.available, 4) : '…'}`;
-  app.onFunds?.();
-  // A view that shows who you are draws again only when that changes.
-  const signer = `${app.signer}/${app.account ? hex(app.account) : ''}`;
-  if (signer !== app.lastSigner) {
-    app.lastSigner = signer;
-    app.onWallet?.();
-  }
-}
-
-function payLink(amountText) {
-  const fields = [`to=${hex(app.account)}`, `coin=${hex(app.config.coin)}`];
-  if (amountText) fields.push(`amount=${amountText}`);
-  fields.push(`note=${encodeURIComponent('Ting Canvas')}`, `net=${app.chainHex.slice(0, 8)}`);
-  return `ting:pay?${fields.join('&')}`;
-}
-
-function openWallet() {
-  const dialog = $('#wallet-dialog');
+/** What signs here: Ting ID, or any wallet that reads TCR-1 call links; and the accounts the user linked. */
+function openSigning() {
+  const dialog = $('#sign-dialog');
   const body = $('.dialog-body', dialog);
-  const choice = `<div class="segmented" role="radiogroup" aria-label="Sign with">
-      <button role="radio" data-signer="browser" aria-checked="${app.signer === 'browser'}">This browser</button>
-      <button role="radio" data-signer="tingid" aria-checked="${app.signer === 'tingid'}">Ting ID</button>
-    </div>`;
-  if (app.signer === 'tingid') {
-    body.innerHTML = `<h2>Sign with Ting ID</h2>${choice}
-      <p>Each action becomes a Ting call link, shown as a QR code to scan with Ting ID or a link to open on the phone.
-      Ting ID shows the action in the program’s words and what leaves your account, signs it with the account you
-      choose, and submits it. This page then finds it on the chain.</p>
-      <p class="hint">Ting ID’s support for call links (TCR-1) is still a draft: until it ships, sign in this browser.</p>`;
-  } else if (!cryptoAvailable()) {
-    body.innerHTML = `<h2>Wallet</h2>${choice}<p>This browser cannot sign here: open the page over https.</p>`;
-  } else if (!app.wallet) {
-    body.innerHTML = `<h2>A wallet for painting</h2>${choice}
-      <p>Painting and bidding are signed by a key this page keeps in your browser, for an ordinary Ting account.
-      You fund it from Ting ID, and you can back it up and restore it.</p>
-      <div class="row"><button class="primary" id="create">Create a wallet</button>
-      <label class="button">Restore a backup<input type="file" id="restore" accept="application/json,.json" hidden></label></div>`;
-    $('#create', body).onclick = async () => {
-      app.wallet = await Wallet.create();
-      await walletChanged();
-      openWallet();
-    };
-    $('#restore', body).onchange = async (e) => {
-      try {
-        app.wallet = await Wallet.restore(await e.target.files[0].text());
-        await walletChanged();
-        openWallet();
-      } catch (err) {
-        toast(`Not a wallet backup: ${esc(err.message)}`, 'error');
-      }
-    };
-  } else {
-    const account = hex(app.account);
-    const funds = app.funds;
-    body.innerHTML = `<h2>Your wallet</h2>${choice}
-      <dl class="lines">
-        <div><dt>Available</dt><dd>${funds ? amount(funds.available) : '…'}</dd></div>
-        ${funds?.locked ? `<div><dt>Locked</dt><dd>${amount(funds.locked)}</dd></div>` : ''}
-      </dl>
-      <label class="field"><span>Account</span><input class="mono" readonly value="${account}" id="account"></label>
-      <div class="row"><button id="copy-account">Copy account</button></div>
-      <h3>Add ${esc(app.coin.symbol)} from Ting ID</h3>
-      <div class="pay">
-        <div class="qr" id="qr"></div>
-        <div>
-          <label class="field"><span>Amount to ask for</span><input id="ask" inputmode="decimal" value="1"></label>
-          <p class="hint">Scan with Ting ID, or on the phone open the link.</p>
-          <div class="row"><a class="button" id="open-link">Open in Ting ID</a><button id="copy-link">Copy link</button></div>
-        </div>
-      </div>
-      <h3>Keep it safe</h3>
-      <p class="hint">The key lives only in this browser. Whoever holds the backup controls the account.</p>
-      <div class="row"><button id="backup">Download backup</button><button class="danger" id="forget">Remove from this browser</button></div>
-      <details><summary>Fee per transaction</summary>
-        <p class="hint">Paid to the miner of the block, in ${esc(app.coin.symbol)}, with each payment; 0 relies on miners that include unpaid transactions.</p>
-        <label class="field"><span>Fee</span><input id="fee" inputmode="decimal" value="${formatAmount(app.fee, app.coin.decimals)}"></label>
-      </details>`;
-    const showQr = () => {
-      const ask = parseAmount($('#ask', body).value, app.coin.decimals);
-      const link = payLink(ask ? linkAmount(ask, app.coin.decimals) : '');
-      $('#qr', body).innerHTML = qrSvg(link);
-      $('#open-link', body).href = link;
-      $('#copy-link', body).onclick = () => copy(link, 'Pay link copied');
-    };
-    $('#ask', body).oninput = showQr;
-    showQr();
-    $('#copy-account', body).onclick = () => copy(account, 'Account copied');
-    $('#backup', body).onclick = () => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([app.wallet.backup()], { type: 'application/json' }));
-      a.download = `ting-canvas-wallet-${account.slice(0, 8)}.json`;
-      a.click();
-    };
-    $('#forget', body).onclick = async () => {
-      if (!confirm('Remove the key from this browser? Without a backup, its coins and canvases are lost for good.')) return;
-      Wallet.forget();
-      app.wallet = null;
-      await walletChanged();
-      openWallet();
-    };
-    $('#fee', body).onchange = (e) => {
-      const fee = parseAmount(e.target.value, app.coin.decimals);
-      if (fee == null) return toast('Not an amount.', 'error');
-      app.fee = fee;
-      try { localStorage.setItem('ting-canvas/fee', fee.toString()); } catch { /* not kept */ }
-    };
-  }
-  $$('[data-signer]', body).forEach((b) => {
-    b.onclick = () => {
-      app.signer = b.dataset.signer;
-      try { localStorage.setItem('ting-canvas/signer', app.signer); } catch { /* not kept */ }
-      renderChip();
-      openWallet();
-    };
+  const linked = [...app.accounts];
+  body.innerHTML = `<h2>Signing with Ting ID</h2>
+    <p>This page holds no key and no coins. Each action becomes a Ting call link, shown as a QR code to scan with
+    Ting ID or a link to open on the phone. Ting ID shows the action in the program’s words and what leaves your
+    account, signs it with the account you choose, and submits it. The page then finds it on the chain.</p>
+    <p class="hint">Any wallet that reads Ting call links (TCR-1) does the same.</p>
+    <h3>Your accounts</h3>
+    <p class="hint">The page shows these as you, with the canvases they own. It keeps only their addresses, in this
+    browser; a call Ting ID sends back to this page links the account that made it.</p>
+    <ul class="linked">${linked.map((a) => `<li><code title="${a}">${a.slice(0, 10)}…${a.slice(-8)}</code><button data-unlink="${a}">Remove</button></li>`).join('')
+      || '<li class="muted">None yet.</li>'}</ul>
+    <form class="row" id="link-form">
+      <label class="field"><span>Add an account</span><input id="link-account" class="mono" autocomplete="off" placeholder="64 hex digits"></label>
+      <button>Add</button>
+    </form>`;
+  $('#link-form', body).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const account = idOf($('#link-account', body).value);
+    if (!account) return toast('An account is 64 hex digits.', 'error');
+    linkAccount(account, true);
+    openSigning();
   });
+  $$('[data-unlink]', body).forEach((b) => (b.onclick = () => { linkAccount(unhex(b.dataset.unlink), false); openSigning(); }));
   if (!dialog.open) dialog.showModal();
 }
 
-async function walletChanged() {
-  app.account = app.wallet ? app.wallet.account(app.policy) : null;
-  app.funds = null;
-  app.local = { call: null, coin: null };
-  renderChip();
-  await loadFunds().catch(() => {});
+// ---- Your accounts -----------------------------------------------------------
+
+const ACCOUNTS = 'ting-canvas/accounts';
+
+function loadAccounts() {
+  try {
+    const list = JSON.parse(localStorage.getItem(ACCOUNTS) ?? '[]');
+    app.accounts = new Set(list.filter((a) => /^[0-9a-f]{64}$/.test(a)));
+  } catch {
+    app.accounts = new Set();
+  }
+}
+
+/** Links or unlinks an account, and shows the change wherever the view shows accounts. */
+function linkAccount(account, linked) {
+  const text = hex(account);
+  if (linked) app.accounts.add(text);
+  else app.accounts.delete(text);
+  try {
+    localStorage.setItem(ACCOUNTS, JSON.stringify([...app.accounts]));
+  } catch { /* kept for this visit only */ }
+  app.onAccounts?.();
+}
+
+const isMine = (account) => Boolean(account) && app.accounts.has(hex(account));
+
+/** The account a call to the canvas acted for, from its receipt's *executed* or *scheduled* event, or null. */
+function actorOf(receipt) {
+  for (const e of receipt?.events ?? []) {
+    if (e.contract !== hex(app.canvas)) continue;
+    const payload = unhex(e.payload_hex);
+    if (payload.length >= 64 && (equal(payload.subarray(0, 32), EXECUTED) || equal(payload.subarray(0, 32), SCHEDULED))) {
+      return payload.slice(32, 64);
+    }
+  }
+  return null;
 }
 
 async function copy(text, done) {
@@ -1161,12 +1000,6 @@ function fatal(title, detail) {
 async function boot() {
   const query = new URLSearchParams(location.search);
   app.node = new Node(query.get('node') || DEFAULT_NODE);
-  try {
-    app.fee = BigInt(localStorage.getItem('ting-canvas/fee') ?? '0');
-    app.signer = localStorage.getItem('ting-canvas/signer') === 'tingid' ? 'tingid' : 'browser';
-  } catch {
-    app.fee = 0n;
-  }
   let status;
   try {
     status = await app.node.status();
@@ -1184,7 +1017,7 @@ async function boot() {
   try {
     const [canvas, configBytes] = await Promise.all([app.node.contract(app.canvas), app.node.record(app.canvas, CONFIG_KEY)]);
     if (canvas.code_hash !== CODE_HASHES.canvas) {
-      return fatal('This canvas runs other code', `The contract runs code ${esc(canvas.code_hash)}, not the canvas program this page was written for. The page signs nothing for it.`);
+      return fatal('This canvas runs other code', `The contract runs code <code>${esc(canvas.code_hash)}</code>, not the canvas program this page was written for. The page makes no calls for it.`);
     }
     app.config = decodeConfig(configBytes);
     app.templates = decodeTemplateList(await app.node.record(app.canvas, TEMPLATES_KEY));
@@ -1196,32 +1029,19 @@ async function boot() {
     const [coin, coinConfig] = await Promise.all([app.node.contract(app.config.coin), app.node.record(app.config.coin, CONFIG_KEY)]);
     if (coin.code_hash !== CODE_HASHES.coin) return fatal('The canvas pays in an unknown coin', 'Its coin does not run the reference coin program.');
     app.coin = decodeCoin(coinConfig);
-    app.policy = idOf(POLICY_P256[app.chainHex]);
-    const policy = app.policy && (await app.node.contract(app.policy).catch(() => null));
-    if (policy?.code_hash !== CODE_HASHES.policyP256) {
-      return fatal('No P-256 policy on this network', 'The wallet signs through the reference policy-p256, which this network does not have where expected.');
-    }
   } catch (e) {
     return fatal('Cannot read the canvas', esc(e.message));
   }
-  if (cryptoAvailable()) {
-    try {
-      app.wallet = await Wallet.load();
-    } catch {
-      toast('The wallet kept in this browser cannot be read.', 'error');
-    }
-  }
-  app.account = app.wallet ? app.wallet.account(app.policy) : null;
-  $('#wallet-chip').onclick = openWallet;
-  for (const id of ['wallet', 'call']) {
+  loadAccounts();
+  const chip = $('#sign-chip');
+  chip.innerHTML = `${icon('wallet')} Ting ID`;
+  chip.onclick = openSigning;
+  for (const id of ['sign', 'call']) {
     const dialog = $(`#${id}-dialog`);
     $('.close', dialog).onclick = () => dialog.close();
     dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
   }
-  renderChip();
-  loadFunds().catch(() => {});
   setInterval(() => app.tick?.(), 1000);
-  setInterval(() => loadFunds().catch(() => {}), 30_000);
   window.addEventListener('hashchange', arrive);
   arrive();
 }
@@ -1233,9 +1053,16 @@ function arrive() {
   const id = m[1].toLowerCase();
   history.replaceState(null, '', location.pathname + location.search);
   const label = 'Your call from Ting ID';
-  follow(id, 0, label, toast(`${label}: waiting for a block…`, 'info', 600_000), async () => {
+  follow(id, 0, label, toast(`${label}: waiting for a block…`, 'info', 600_000), async (ok) => {
     try {
-      const week = weekOfTransaction((await app.node.transaction(id)).occurrences?.[0]?.hex);
+      const seen = (await app.node.transaction(id)).occurrences?.[0];
+      // The wallet sent this transaction here: the account it acted for is the user's.
+      const actor = ok && actorOf(seen?.receipt);
+      if (actor && !isMine(actor)) {
+        linkAccount(actor, true);
+        toast(`Linked your account <code>${hex(actor).slice(0, 6)}…${hex(actor).slice(-4)}</code>: the page shows what it owns.`, 'success', 8000);
+      }
+      const week = weekOfTransaction(seen?.hex);
       if (week) location.hash = week === weekAt(app.config, now()) ? '#/' : `#/week/${week}`;
     } catch { /* stay on the page */ }
   });
