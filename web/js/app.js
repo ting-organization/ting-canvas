@@ -211,14 +211,20 @@ async function follow(id, before, label, done) {
     }
     const seen = answer.occurrences?.[0];
     if (seen) {
-      const r = seen.receipt;
-      if (r.status === 0) return end(`${esc(label)}: done, in block ${seen.height}`, 'success', true);
-      let reason = r.status_name;
-      try { reason = new TextDecoder('utf-8', { fatal: true }).decode(unhex(r.result_hex)) || reason; } catch { /* binary result */ }
-      return end(`${esc(label)} failed: ${esc(reason)}`, 'error', false);
+      if (seen.receipt.status === 0) return end(`${esc(label)}: done, in block ${seen.height}`, 'success', true);
+      return end(`${esc(label)} failed: ${esc(failure(seen.receipt))}`, 'error', false);
     }
     if (answer.pending) note.innerHTML = `${esc(label)}: received. It is being confirmed, which usually takes a minute or two.`;
     if (Date.now() - started > 20 * 60_000) return end(`${esc(label)}: still not confirmed after 20 minutes`, 'error', false);
+  }
+}
+
+/** Why a transaction failed: the program's message, or the receipt's status. */
+function failure(receipt) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(unhex(receipt.result_hex)) || receipt.status_name;
+  } catch {
+    return receipt.status_name; // a binary result
   }
 }
 
@@ -258,7 +264,7 @@ async function perform({ call, pay, label, from, delayed, done }) {
   const code = $('.qr', dialog);
   if (code) code.onclick = () => code.classList.toggle('full');
   dialog.oncancel = (e) => {
-    if (!code?.classList.contains('full')) return;
+    if (!code?.isConnected || !code.classList.contains('full')) return;
     e.preventDefault();
     code.classList.remove('full');
   };
@@ -271,13 +277,15 @@ async function perform({ call, pay, label, from, delayed, done }) {
 /**
  * Looks for the operation in the program's events until it is done, or the
  * dialog is closed; and in the node's pool, to say when Ting ID has sent it.
+ * From then on the page knows the transaction, and says so if it fails.
  */
 async function watchCall(dialog, call, label, start, done) {
   const operation = hex(operationHash(call.head));
   const head = hex(call.head);
   const token = (dialog.watching = {});
   const read = new Set();
-  let sent = false;
+  let sent = null;
+  let scheduled = false;
   for (;;) {
     await new Promise((r) => setTimeout(r, 4000));
     if (dialog.watching !== token) return;
@@ -289,23 +297,41 @@ async function watchCall(dialog, call, label, start, done) {
         toast(`${esc(label)}: done, in block ${executed.height}`, 'success', 10_000);
         return done?.(true);
       }
-      const scheduled = await loadTopic(SCHEDULED, start, decodeScheduled);
-      const mine = scheduled.find((s) => hex(s.head) === head);
-      const status = $('#call-status', dialog);
+      const mine = (await loadTopic(SCHEDULED, start, decodeScheduled)).find((s) => hex(s.head) === head);
       if (mine) {
-        status.innerHTML = `Scheduled by ${who(mine.account)}: it takes effect ${esc(date(mine.executeAt))}, and can be cancelled until then.`;
-      } else if (!sent && (await pooled(call.head, read))) {
-        sent = true;
-        status.textContent = 'Ting ID sent it. It is being confirmed, which usually takes a minute or two.';
+        if (!scheduled) {
+          callState(dialog, 'scheduled', `Scheduled by ${who(mine.account)}`,
+            `It takes effect ${esc(date(mine.executeAt))}, and can be cancelled until then.`);
+        }
+        scheduled = true;
+      } else if (sent) {
+        const seen = (await app.node.transaction(sent)).occurrences?.[0];
+        if (seen && seen.receipt.status !== 0) {
+          callState(dialog, 'failed', 'It did not go through', `${esc(label)} failed: ${esc(failure(seen.receipt))}`);
+          return done?.(false);
+        }
+      } else if ((sent = await pooled(call.head, read))) {
+        callState(dialog, 'sent', 'Ting ID sent it', 'It is being confirmed, which usually takes a minute or two.');
       }
     } catch { /* the next look tries again */ }
   }
 }
 
 /**
- * Whether a call of the operation `head` waits in the node's pool. The wallet
- * made the transaction, so the page knows no id: it reads each pooled
- * transaction once, noting it in `read`, and looks at what it asks the canvas.
+ * Shows where a call stands in place of its code, which has done its job:
+ * `sent`, `scheduled` or `failed`, with a title and a line of HTML.
+ */
+function callState(dialog, kind, title, text) {
+  const mark = kind === 'sent' ? '<span class="spinner" aria-hidden="true"></span>' : icon(kind === 'failed' ? 'alert' : 'clock');
+  $('.pay', dialog).innerHTML = `<div class="call-state ${kind}" role="status">${mark}
+    <div><b>${esc(title)}</b><p id="call-status">${text}</p></div></div>`;
+}
+
+/**
+ * The id of a transaction that calls the operation `head` and waits in the
+ * node's pool, or null. The wallet made it, so the page knows no id: it reads
+ * each pooled transaction once, noting it in `read`, and looks at what it asks
+ * the canvas.
  */
 async function pooled(head, read) {
   for (const { id } of (await app.node.mempool()).items) {
@@ -313,10 +339,10 @@ async function pooled(head, read) {
     try {
       const input = canvasInput((await app.node.transaction(id)).pending_transaction?.hex);
       read.add(id);
-      if (input && equal(input.subarray(0, head.length), head)) return true;
+      if (input && equal(input.subarray(0, head.length), head)) return id;
     } catch { /* in a block already, or out of reach; the next look tries again */ }
   }
-  return false;
+  return null;
 }
 
 // ---- Routing ---------------------------------------------------------------
@@ -1020,6 +1046,8 @@ function icon(name) {
     wallet: '<rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M16 12.5h2M3 9.5h18"/>',
     play: '<path d="M7 5l12 7-12 7z"/>',
     download: '<path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16.5v.01"/>',
   };
   return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
 }
