@@ -157,9 +157,11 @@ select {
 
 /* ---- Paint */
 main { flex: 1; min-height: 0; }
+/* The window's height, whatever the side holds: `flex: 1` would size it to its
+   content instead, and the side, not the page, scrolls. */
 main.paint {
   display: grid; grid-template-columns: minmax(0, 1fr) 340px;
-  height: calc(100vh - 57px); height: calc(100dvh - 57px);
+  flex: none; height: calc(100vh - 57px); height: calc(100dvh - 57px);
 }
 .stage-wrap { position: relative; min-width: 0; min-height: 0; background: var(--stage); background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px); background-size: 18px 18px; }
 .stage { position: absolute; inset: 0; touch-action: none; cursor: crosshair; }
