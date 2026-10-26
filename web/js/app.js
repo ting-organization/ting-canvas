@@ -185,11 +185,13 @@ async function send(input, { label, done }) {
     toast(`${esc(label)}: ${esc(e.message)}`, 'error');
     return false;
   }
-  follow(id, before, label, toast(`${esc(label)}: waiting for a block…`, 'info', 600_000), done);
+  follow(id, before, label, done);
   return true;
 }
 
-async function follow(id, before, label, note, done) {
+/** Follows a transaction the page knows by id: into the node's pool, then into a block. */
+async function follow(id, before, label, done) {
+  const note = toast(`${esc(label)}: waiting for it to arrive…`, 'info', 600_000);
   const started = Date.now();
   const end = (message, kind, ok) => {
     note.remove();
@@ -215,7 +217,8 @@ async function follow(id, before, label, note, done) {
       try { reason = new TextDecoder('utf-8', { fatal: true }).decode(unhex(r.result_hex)) || reason; } catch { /* binary result */ }
       return end(`${esc(label)} failed: ${esc(reason)}`, 'error', false);
     }
-    if (Date.now() - started > 20 * 60_000) return end(`${esc(label)}: still not in a block after 20 minutes`, 'error', false);
+    if (answer.pending) note.innerHTML = `${esc(label)}: received. It is being confirmed, which usually takes a minute or two.`;
+    if (Date.now() - started > 20 * 60_000) return end(`${esc(label)}: still not confirmed after 20 minutes`, 'error', false);
   }
 }
 
@@ -237,35 +240,44 @@ async function perform({ call, pay, label, from, delayed, done }) {
     from, delayed, returnTo: location.origin + location.pathname + location.search,
   });
   const dialog = $('#call-dialog');
-  let qr;
-  try {
-    qr = qrSvg(link);
-  } catch {
-    qr = '<p class="hint">Too long for a QR code: open it on the phone that has Ting ID.</p>';
-  }
+  let qr = null;
+  try { qr = qrSvg(link); } catch { /* too long for a QR code */ }
   $('.dialog-body', dialog).innerHTML = `<h2>${esc(label)} with Ting ID</h2>
     <p class="call-sentence">${sentence(call.template, call.values, pay?.burn ?? pay?.amount)}</p>
     <p class="hint">${pay ? `Ting ID shows what leaves your account: ${pay.burn != null ? `${amount(pay.burn)} burned` : `${amount(pay.amount)} to ${who(pay.to)}`}, and the fee.` : 'Nothing leaves your account but the fee.'}</p>
     <div class="pay">
-      <div class="qr">${qr}</div>
+      ${qr ? `<button class="qr" aria-label="Show the QR code full screen">${qr}</button>` : '<p class="hint">Too long for a QR code: open it on the phone that has Ting ID.</p>'}
       <div>
-        <p class="hint">Scan it with Ting ID, or open it on the phone.${link.length > 1000 ? ' It is long, so a QR code may be hard to scan from a screen.' : ''}</p>
+        <p class="hint">Scan it with Ting ID, or open it on the phone.${!qr ? '' : link.length > 1000 ? ' It is long: if the phone cannot read it, click the code to show it full screen.' : ' Click the code to show it full screen.'}</p>
         <div class="row"><a class="button primary" href="${esc(link)}">Open in Ting ID</a><button id="copy-call">Copy link</button></div>
-        <p class="hint" id="call-status">Waiting for it on the chain…</p>
+        <p class="hint" id="call-status">Waiting for you to approve it in Ting ID…</p>
       </div>
     </div>`;
   $('#copy-call', dialog).onclick = () => copy(link, 'Call link copied');
+  // Full screen gives a long link's small modules the most pixels; Escape or a click shrinks it again.
+  const code = $('.qr', dialog);
+  if (code) code.onclick = () => code.classList.toggle('full');
+  dialog.oncancel = (e) => {
+    if (!code?.classList.contains('full')) return;
+    e.preventDefault();
+    code.classList.remove('full');
+  };
   if (!dialog.open) dialog.showModal();
   const start = (await app.node.status()).height;
   watchCall(dialog, call, label, start, done);
   return true;
 }
 
-/** Looks for the operation in the program's events until it is done, or the dialog is closed. */
+/**
+ * Looks for the operation in the program's events until it is done, or the
+ * dialog is closed; and in the node's pool, to say when Ting ID has sent it.
+ */
 async function watchCall(dialog, call, label, start, done) {
   const operation = hex(operationHash(call.head));
   const head = hex(call.head);
   const token = (dialog.watching = {});
+  const read = new Set();
+  let sent = false;
   for (;;) {
     await new Promise((r) => setTimeout(r, 4000));
     if (dialog.watching !== token) return;
@@ -279,11 +291,32 @@ async function watchCall(dialog, call, label, start, done) {
       }
       const scheduled = await loadTopic(SCHEDULED, start, decodeScheduled);
       const mine = scheduled.find((s) => hex(s.head) === head);
+      const status = $('#call-status', dialog);
       if (mine) {
-        $('#call-status', dialog).innerHTML = `Scheduled by ${who(mine.account)}: it takes effect ${esc(date(mine.executeAt))}, and can be cancelled until then.`;
+        status.innerHTML = `Scheduled by ${who(mine.account)}: it takes effect ${esc(date(mine.executeAt))}, and can be cancelled until then.`;
+      } else if (!sent && (await pooled(call.head, read))) {
+        sent = true;
+        status.textContent = 'Ting ID sent it. It is being confirmed, which usually takes a minute or two.';
       }
     } catch { /* the next look tries again */ }
   }
+}
+
+/**
+ * Whether a call of the operation `head` waits in the node's pool. The wallet
+ * made the transaction, so the page knows no id: it reads each pooled
+ * transaction once, noting it in `read`, and looks at what it asks the canvas.
+ */
+async function pooled(head, read) {
+  for (const { id } of (await app.node.mempool()).items) {
+    if (read.has(id)) continue;
+    try {
+      const input = canvasInput((await app.node.transaction(id)).pending_transaction?.hex);
+      read.add(id);
+      if (input && equal(input.subarray(0, head.length), head)) return true;
+    } catch { /* in a block already, or out of reach; the next look tries again */ }
+  }
+  return false;
 }
 
 // ---- Routing ---------------------------------------------------------------
@@ -1053,7 +1086,7 @@ function arrive() {
   const id = m[1].toLowerCase();
   history.replaceState(null, '', location.pathname + location.search);
   const label = 'Your call from Ting ID';
-  follow(id, 0, label, toast(`${label}: waiting for a block…`, 'info', 600_000), async (ok) => {
+  follow(id, 0, label, async (ok) => {
     try {
       const seen = (await app.node.transaction(id)).occurrences?.[0];
       // The wallet sent this transaction here: the account it acted for is the user's.
@@ -1070,14 +1103,18 @@ function arrive() {
 }
 
 /** The week a transaction's call to the canvas names, or null. */
-function weekOfTransaction(txHex) {
+/** The input of a transaction that calls the canvas, or null. */
+function canvasInput(txHex) {
   if (!txHex) return null;
   const r = new Reader(unhex(txHex));
   if (r.u8() !== 1 || r.u8() !== 0) return null;
   for (let i = 0; i < 4; i++) r.u64();
-  if (!equal(r.id(), app.canvas)) return null;
-  const input = r.bytes();
-  if (input.length < 40 || !app.templates.has(hex(input.subarray(0, 32)))) return null;
+  return equal(r.id(), app.canvas) ? r.bytes() : null;
+}
+
+function weekOfTransaction(txHex) {
+  const input = canvasInput(txHex);
+  if (!input || input.length < 40 || !app.templates.has(hex(input.subarray(0, 32)))) return null;
   return Number(weekOfCall(input.subarray(32)));
 }
 

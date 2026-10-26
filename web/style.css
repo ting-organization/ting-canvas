@@ -224,9 +224,15 @@ dialog {
 }
 dialog::backdrop { background: rgba(10, 10, 12, .45); }
 dialog .close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; padding: 0; border-color: transparent; font-size: 1.3rem; line-height: 1; }
-.pay { display: grid; grid-template-columns: 150px 1fr; gap: 16px; align-items: start; }
-.qr { background: #fff; border-radius: 10px; padding: 6px; border: 1px solid var(--border); }
+#call-dialog { width: min(560px, calc(100vw - 32px)); }
+/* A call link can fill a version 40 code, so it gets the dialog's width, and the whole screen on a click. */
+.pay { display: grid; gap: 14px; }
+.qr { display: block; justify-self: center; width: min(100%, 54vh); padding: 6px; background: #fff; border-radius: 10px; border: 1px solid var(--border); cursor: zoom-in; }
+.qr:hover { background: #fff; }
+.qr:active { transform: none; }
 .qr svg { display: block; width: 100%; height: auto; }
+.qr.full { position: fixed; inset: 0; z-index: 1; width: 100%; height: 100%; display: grid; place-items: center; padding: 0; border: 0; border-radius: 0; cursor: zoom-out; }
+.qr.full svg { width: min(100vw, 100vh); width: min(100vw, 100dvh); }
 details { margin-top: 16px; }
 summary { cursor: pointer; color: var(--text-2); font-size: .9rem; }
 
@@ -264,8 +270,7 @@ summary { cursor: pointer; color: var(--text-2); font-size: .9rem; }
   main.paint { grid-template-rows: min(76vh, 640px) auto; }
   .toolbar { gap: 6px; padding: 6px; max-width: calc(100% - 16px); }
   .swatch { width: 24px; height: 24px; }
-  .pay { grid-template-columns: 1fr; }
-  .qr { max-width: 220px; }
+  .qr { width: min(100%, 36vh); }
   .stats { gap: 6px; }
   .stats div { padding: 6px 8px; }
 }

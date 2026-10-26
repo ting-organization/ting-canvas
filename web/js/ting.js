@@ -102,6 +102,11 @@ export class Node {
     return this.request(`/v1/transactions/${typeof id === 'string' ? id : hex(id)}?from=${from}`);
   }
 
+  /** The transactions waiting in the node's pool for a block: ids, sizes and budgets. */
+  mempool() {
+    return this.request('/v1/mempool');
+  }
+
   /** How many times blocks of the canonical chain include a transaction. */
   async occurrences(id) {
     let from = 0;
