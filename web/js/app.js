@@ -9,7 +9,7 @@ import {
   parseAmount, priceOf, recordKey, settleInput, stage, templatesOf, tileKey, TITLE_MAX, titleKey,
   unlistCall, unnameCall, weekAt, weekOfCall,
 } from './canvas.js';
-import { CODE_HASHES, DEFAULT_NODE, MAX_DRAFT, NETWORKS } from './config.js';
+import { CODE_HASHES, DEFAULT_NODE, MAX_DRAFT, NETWORKS, TING_ID_WEB } from './config.js';
 import { css, imageOf, Painter } from './painter.js';
 import { qrSvg } from './qr.js';
 import {
@@ -252,10 +252,16 @@ async function perform({ call, pay, label, from, delayed, done }) {
     <p class="call-sentence">${sentence(call.template, call.values, pay?.burn ?? pay?.amount)}</p>
     <p class="hint">${pay ? `Ting ID shows what leaves your account: ${pay.burn != null ? `${amount(pay.burn)} burned` : `${amount(pay.amount)} to ${who(pay.to)}`}, and the fee.` : 'Nothing leaves your account but the fee.'}</p>
     <div class="pay">
-      ${qr ? `<button class="qr" aria-label="Show the QR code full screen">${qr}</button>` : '<p class="hint">Too long for a QR code: open it on the phone that has Ting ID.</p>'}
+      ${qr ? `<button class="qr" aria-label="Show the QR code full screen">${qr}</button>` : '<p class="hint">Too long for a QR code: open it below, in Ting ID on the phone or in Ting ID Web.</p>'}
       <div>
-        <p class="hint">Scan it with Ting ID, or open it on the phone.${!qr ? '' : link.length > 1000 ? ' It is long: if the phone cannot read it, click the code to show it full screen.' : ' Click the code to show it full screen.'}</p>
-        <div class="row"><a class="button primary" href="${esc(link)}">Open in Ting ID</a><button id="copy-call">Copy link</button></div>
+        ${qr ? `<p class="hint">Scan it with Ting ID, or open it below.${link.length > 1000 ? ' It is long: if the phone cannot read it, click the code to show it full screen.' : ' Click the code to show it full screen.'}</p>` : ''}
+        <div class="open-with">
+          <div class="open-head"><span>Open with</span><button class="quiet" id="copy-call">${icon('copy')} Copy link</button></div>
+          <div class="apps">
+            <a class="app" href="${esc(link)}">${MARKS.tingId}<span><b>Ting ID</b><small>The app on your phone</small></span></a>
+            <a class="app" href="${esc(TING_ID_WEB + '#' + link)}" target="_blank" rel="noopener">${MARKS.tingIdWeb}<span><b>Ting ID Web</b><small>In this browser</small></span>${icon('external')}</a>
+          </div>
+        </div>
         <p class="hint" id="call-status">Waiting for you to approve it in Ting ID…</p>
       </div>
     </div>`;
@@ -1048,9 +1054,20 @@ function icon(name) {
     download: '<path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16.5v.01"/>',
+    copy: '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7.5a2 2 0 002 2h2.5"/>',
+    external: '<path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4"/>',
   };
   return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
 }
+
+/**
+ * The wallets' own icons, as each draws it: Ting ID's (ting-id, assets/logo)
+ * and Ting ID Web's (ting-id-web, web/icon.svg).
+ */
+const MARKS = {
+  tingId: '<svg class="app-mark" viewBox="0 0 1024 1024" aria-hidden="true"><rect width="1024" height="1024" rx="224" fill="#4F46E5"/><g fill="#FFFFFF"><circle cx="512" cy="512" r="300" fill="none" stroke="#FFFFFF" stroke-width="76"/><rect x="382" y="368" width="260" height="84" rx="42"/><rect x="470" y="476" width="84" height="196" rx="42"/></g></svg>',
+  tingIdWeb: '<svg class="app-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#0b1220"/><circle cx="32" cy="32" r="17" fill="none" stroke="#a5a6ff" stroke-width="4"/><path d="M24 26h16M32 26v16" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/></svg>',
+};
 
 // ---- Start -----------------------------------------------------------------
 

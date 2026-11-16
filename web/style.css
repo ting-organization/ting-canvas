@@ -235,6 +235,19 @@ dialog .close { position: absolute; top: 12px; right: 12px; width: 32px; height:
 .qr svg { display: block; width: 100%; height: auto; }
 .qr.full { position: fixed; inset: 0; z-index: 1; width: 100%; height: 100%; display: grid; place-items: center; padding: 0; border: 0; border-radius: 0; cursor: zoom-out; }
 .qr.full svg { width: min(100vw, 100vh); width: min(100vw, 100dvh); }
+/* The wallets a call link opens in, each with its own icon. */
+.open-with { margin-top: 12px; }
+.open-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: .8rem; font-weight: 500; color: var(--muted); }
+button.quiet { padding: 4px 8px; font-size: .82rem; color: var(--text-2); border-color: transparent; background: none; }
+button.quiet:hover { background: var(--hover); border-color: transparent; }
+button.quiet .icon { width: 15px; height: 15px; }
+.apps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.app { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--text); transition: background .12s, border-color .12s; }
+.app:hover { background: var(--card-alt); border-color: color-mix(in srgb, var(--primary) 45%, transparent); text-decoration: none; }
+.app b { display: block; font-size: .95rem; font-weight: 600; line-height: 1.3; }
+.app small { display: block; font-size: .8rem; color: var(--muted); line-height: 1.3; }
+.app > .icon { margin-left: auto; width: 15px; height: 15px; color: var(--muted); align-self: flex-start; }
+.app-mark { flex: none; width: 38px; height: 38px; border-radius: 9px; box-shadow: 0 0 0 1px var(--border); }
 /* Where a call stands, once Ting ID has sent it: in place of the code. */
 .call-state { display: flex; align-items: center; gap: 14px; padding: 18px; border-radius: 12px; background: var(--primary-soft); color: var(--primary); }
 .call-state b { display: block; font-size: 1.02rem; color: var(--text); }
@@ -283,6 +296,7 @@ summary { cursor: pointer; color: var(--text-2); font-size: .9rem; }
   .toolbar { gap: 6px; padding: 6px; max-width: calc(100% - 16px); }
   .swatch { width: 24px; height: 24px; }
   .qr { width: min(100%, 36vh); }
+  .apps { grid-template-columns: 1fr; }
   .stats { gap: 6px; }
   .stats div { padding: 6px 8px; }
 }

@@ -29,5 +29,11 @@ export const CODE_HASHES = {
   coin: 'c675a4b753b61b50ae4b63cde122171f8f2bfb9a05a92df895633ca8c351e4d6',
 };
 
+/**
+ * Ting ID Web, the wallet in the browser (ting-organization/ting-id-web): it
+ * opens a call link given after its address, `…/#ting:call?…`.
+ */
+export const TING_ID_WEB = 'https://wallet.ting-project.com/';
+
 /** Pixels in one paint at most: one signature, one transaction. */
 export const MAX_DRAFT = 1000;
