@@ -86,8 +86,12 @@ also carries the page's address as `return`: once Ting ID sent the call it offer
 open it, with `#ting-tx=` and the TransactionId, and the page follows that
 transaction into a block and shows its week.
 
-Ting ID is the wallet that reads these links today; any wallet that implements
-TCR-1 does the same, with nothing to change in the page. On a development chain
+Two wallets read these links today, and the call dialog offers both, each with its
+own icon: **Ting ID**, the app on the phone, which opens the `ting:call` link itself,
+and **Ting ID Web**, the wallet in the browser signed with a passkey, which opens it
+after its address, `https://wallet.ting-project.com/#ting:call?…`, in a new tab, so
+that the page keeps watching for the call. Any wallet that implements TCR-1 does the
+same, with nothing to change in the page. On a development chain
 `scripts/tcr-wallet.mjs` stands in for one.
 
 **Your accounts.** Without a key the page still knows who you are if you let it: it
