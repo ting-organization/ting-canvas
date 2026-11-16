@@ -258,7 +258,7 @@ async function perform({ call, pay, label, from, delayed, done }) {
         <div class="open-with">
           <div class="open-head"><span>Open with</span><button class="quiet" id="copy-call">${icon('copy')} Copy link</button></div>
           <div class="apps">
-            <a class="app" href="${esc(link)}">${MARKS.tingId}<span><b>Ting ID</b><small>The app on your phone</small></span></a>
+            <a class="app" href="${esc(link)}">${MARKS.tingId}<span><b>Ting ID</b><small>The Android app</small></span></a>
             <a class="app" href="${esc(TING_ID_WEB + '#' + link)}" target="_blank" rel="noopener">${MARKS.tingIdWeb}<span><b>Ting ID Web</b><small>In this browser</small></span>${icon('external')}</a>
           </div>
         </div>
